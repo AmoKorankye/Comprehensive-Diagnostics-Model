@@ -14,7 +14,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torchvision import transforms
 import datetime
+import openai
+from openai import OpenAI  # Import the new OpenAI client
+from dotenv import load_dotenv
+import os
 
+# Load environment variables from the .env file in the client directory
+load_dotenv(dotenv_path='../client/.env')
+
+openai.api_key = os.getenv("OPENAI_API_KEY")  # Read the key from the .env file
+
+# Initialize OpenAI client once
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -697,6 +708,68 @@ def send_email_without_attachment(receiver_emails, scan_type, diagnosis_area, su
     except Exception as e:
         print(f"Error sending email: {str(e)}")
         return False
+
+# Lets make a new route for the openai api for a chatbot
+@app.route('/chatbot', methods=['POST'])
+def chatbot():
+    try:
+        data = request.get_json()
+        
+        if 'message' not in data:
+            return jsonify({"status": "failure", "message": "No message provided"}), 400
+        
+        user_message = data.get('message')
+        
+        # Check if API key is available and valid
+        if not os.getenv("OPENAI_API_KEY"):
+            return jsonify({
+                "status": "warning",
+                "user_message": user_message,
+                "ai_response": "I'm currently operating in offline mode due to API configuration issues. Please try again later or contact support."
+            }), 200
+        
+        try:
+            # Initialize the client with the API key from environment variable
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            
+            # Use the new OpenAI client interface
+            response = client.chat.completions.create(
+                model="gpt-4o",  # Updated to use GPT-4 model
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant specializing in medical diagnostics. You explain AI-generated medical scan results clearly and accurately to users. Use simple, reassuring language for patients and more detailed explanations when addressing healthcare professionals. Always emphasize that the AI's diagnosis is supportive and not a replacement for professional medical advice."},
+                    {"role": "user", "content": user_message}
+                ],
+                max_tokens=150,
+                temperature=0.7
+            )
+            
+            # Access response using the new structure
+            ai_response = response.choices[0].message.content.strip()
+            
+            return jsonify({
+                "status": "success",
+                "user_message": user_message,
+                "ai_response": ai_response
+            }), 200
+            
+        except Exception as api_error:
+            error_message = str(api_error)
+            
+            # Check for quota exceeded error
+            if "insufficient_quota" in error_message or "429" in error_message:
+                # Provide a fallback response for quota errors
+                return jsonify({
+                    "status": "warning",
+                    "user_message": user_message,
+                    "ai_response": "I apologize, but our AI service is currently unavailable due to usage limits. Your question was: \"" + user_message + "\". Please try again later or contact support for assistance."
+                }), 200
+            else:
+                # Re-raise other errors
+                raise api_error
+    
+    except Exception as e:
+        print(f"Chatbot error: {str(e)}")
+        return jsonify({"status": "failure", "message": f"Error: {str(e)}"}), 500
 
 
 
